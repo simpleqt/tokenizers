@@ -9,8 +9,9 @@ use crate::models::unigram::{Unigram, UnigramScratch};
 use crate::models::wordlevel::WordLevel;
 #[cfg(feature = "wordpiece")]
 use crate::models::wordpiece::{PipelineWordPiece, WordPieceScratch};
+use crate::utils::truncation::pipeline_truncate_pair;
 use crate::{
-    DecoderRuntime, PaddingParams,
+    DecoderRuntime, PaddingParams, TruncationParams,
     models::bpe::{BpeScratch, PipelineBPE},
     pad_encodings,
     pipeline::scratch_pool::{EncodeScratch, ScratchPool},
@@ -210,6 +211,9 @@ struct TokenizerInner {
     role_to_token: BTreeMap<String, String>,
     /// Padding configuration, can be overridden at runtime with [`EncodeHandle::wait_with_padding`].
     padding: Option<PaddingParams>,
+    /// Truncation configuration, can be overridden at runtime with [`TODO`].
+    truncation: Option<TruncationParams>,
+    /// Pool of scratch buffers. Scratch buffers hold intermediate state (cache, intermediate buffers, etc) required by the tokenization algorithms.
     scratch_pool: ScratchPool,
 }
 
@@ -242,6 +246,7 @@ impl PipelineTokenizer {
         decoder: Option<DecoderRuntime>,
         role_to_token: BTreeMap<String, String>,
         padding: Option<PaddingParams>,
+        truncation: Option<TruncationParams>,
     ) -> Self {
         let added_id_min = added_vocabulary
             .get_added_tokens_decoder()
@@ -260,6 +265,7 @@ impl PipelineTokenizer {
                 added_id_min,
                 role_to_token,
                 padding,
+                truncation,
                 scratch_pool: ScratchPool::new(),
             }),
         }
@@ -626,6 +632,7 @@ impl PipelineTokenizer {
     ) -> Result<Encoding> {
         let pp = &self.inner.post_processor;
         let template = if s2.is_some() { &pp.pair } else { &pp.single };
+        let (s1, s2) = pipeline_truncate_pair(s1, s2, &self.inner.truncation, template.n_special())?;
         Ok(if add_special_tokens {
             template.post_process::<true>(s1, s2)
         } else {
@@ -1226,6 +1233,7 @@ mod tests {
             None,
             Default::default(),
             None,
+            None,
         )
     }
 
@@ -1239,6 +1247,7 @@ mod tests {
             None,
             Default::default(),
             Some(padding),
+            None,
         )
     }
 }
