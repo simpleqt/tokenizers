@@ -9,7 +9,7 @@ use crate::models::unigram::{Unigram, UnigramScratch};
 use crate::models::wordlevel::WordLevel;
 #[cfg(feature = "wordpiece")]
 use crate::models::wordpiece::{PipelineWordPiece, WordPieceScratch};
-use crate::utils::truncation::pipeline_truncate_pair;
+use crate::utils::truncation::truncate_pair;
 use crate::{
     DecoderRuntime, PaddingParams, TruncationParams,
     models::bpe::{BpeScratch, PipelineBPE},
@@ -632,7 +632,7 @@ impl PipelineTokenizer {
     ) -> Result<Encoding> {
         let pp = &self.inner.post_processor;
         let template = if s2.is_some() { &pp.pair } else { &pp.single };
-        let (s1, s2) = pipeline_truncate_pair(s1, s2, &self.inner.truncation, template.n_special())?;
+        let (s1, s2) = truncate_pair(s1, s2, &self.inner.truncation, template.n_special())?;
         Ok(if add_special_tokens {
             template.post_process::<true>(s1, s2)
         } else {
