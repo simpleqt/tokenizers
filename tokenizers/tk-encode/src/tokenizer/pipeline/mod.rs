@@ -632,7 +632,8 @@ impl PipelineTokenizer {
     ) -> Result<Encoding> {
         let pp = &self.inner.post_processor;
         let template = if s2.is_some() { &pp.pair } else { &pp.single };
-        let (s1, s2) = truncate_pair(s1, s2, &self.inner.truncation, template.n_special())?;
+        let num_added_specials = if add_special_tokens { template.n_special() } else { 0 };
+        let (s1, s2) = truncate_pair(s1, s2, &self.inner.truncation, num_added_specials)?;
         Ok(if add_special_tokens {
             template.post_process::<true>(s1, s2)
         } else {
