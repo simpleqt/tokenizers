@@ -21,6 +21,7 @@
 #![cfg(feature = "bench-baseline")]
 
 use tk_convert::ConvertError;
+use tk_encode::pipeline::EncodeOptions;
 use tokenizers_release::Tokenizer as Released;
 
 const DATA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../data");
@@ -63,7 +64,11 @@ fn assert_matches_released(repo: &str, file: &str) {
         for special in [false, true] {
             let want = released.encode_fast(*text, special).unwrap();
             let ids = want.get_ids().to_vec();
-            let encodings = pipeline.encode(*text, special).wait().unwrap();
+            let options = EncodeOptions {
+                add_special_tokens: special,
+                ..EncodeOptions::default()
+            };
+            let encodings = pipeline.encode(*text, options).wait().unwrap();
             let encoding = &encodings[0];
             let got: Vec<u32> = encoding.ids().iter().map(|t| t.id()).collect();
             if ids != got {
