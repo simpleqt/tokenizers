@@ -7,6 +7,7 @@
 //!
 //! Run `make data/gpt2.json` first -- the fixture is fetched, not committed.
 
+use tk_encode::pipeline::EncodeOptions;
 use tk_encode::pipeline::PipelineTokenizer;
 
 /// `data/gpt2.json` is still version `1.0`, so run the upgrade pass first -- the reader only
@@ -55,14 +56,20 @@ const CASES: &[(&str, &[u32])] = &[
 ];
 
 fn ids(pipe: &PipelineTokenizer, text: &str) -> Vec<u32> {
-    pipe.encode(text, false)
-        .wait()
-        .unwrap()
-        .remove(0)
-        .ids()
-        .iter()
-        .map(|t| t.id())
-        .collect()
+    pipe.encode(
+        text,
+        EncodeOptions {
+            add_special_tokens: false,
+            ..EncodeOptions::default()
+        },
+    )
+    .wait()
+    .unwrap()
+    .remove(0)
+    .ids()
+    .iter()
+    .map(|t| t.id())
+    .collect()
 }
 
 #[test]

@@ -6,6 +6,8 @@
 //! One read path only, the hand-rolled reader: the config layer lives in another crate, so there is
 //! no `Tokenizer` here to deserialize into.
 
+use tk_encode::pipeline::EncodeOptions;
+
 fn main() {
     let mut args = std::env::args().skip(1);
     let path = args
@@ -18,7 +20,13 @@ fn main() {
     println!(
         "{}",
         pipeline
-            .encode(text.as_str(), false)
+            .encode(
+                text.as_str(),
+                EncodeOptions {
+                    add_special_tokens: false,
+                    ..EncodeOptions::default()
+                }
+            )
             .wait()
             .unwrap()
             .first()

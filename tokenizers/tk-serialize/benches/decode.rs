@@ -7,6 +7,7 @@
 use std::hint::black_box;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use tk_encode::pipeline::EncodeOptions;
 use tk_encode::pipeline::PipelineTokenizer;
 
 const BATCH_SIZE: usize = 1_000;
@@ -36,7 +37,13 @@ fn take_token_budget(token_sequences: &[Vec<u32>], budget: usize) -> &[Vec<u32>]
 fn encode_lines(tokenizer: &PipelineTokenizer, data: &str) -> Vec<Vec<u32>> {
     let lines: Vec<&str> = data.lines().collect();
     tokenizer
-        .encode(lines.as_slice(), false)
+        .encode(
+            lines.as_slice(),
+            EncodeOptions {
+                add_special_tokens: false,
+                ..EncodeOptions::default()
+            },
+        )
         .wait()
         .unwrap()
         .iter()

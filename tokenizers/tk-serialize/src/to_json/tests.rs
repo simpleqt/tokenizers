@@ -6,6 +6,7 @@ use super::*;
 use crate::from_json::from_json;
 use crate::json::Json;
 use crate::vendored::f64_from_literal;
+use tk_encode::pipeline::EncodeOptions;
 
 const BPE_MODEL: &str = r#"{"type": "BPE", "byte_level": false,
     "vocab": {"a": 0, "b": 1, "ab": 2, "abab": 3}, "merges": [["a", "b"], ["ab", "ab"]]}"#;
@@ -57,7 +58,13 @@ fn json(text: &str) -> serde_json::Value {
 
 fn ids(tokenizer: &PipelineTokenizer, text: &str, specials: bool) -> Vec<u32> {
     let encoded = tokenizer
-        .encode(text, specials)
+        .encode(
+            text,
+            EncodeOptions {
+                add_special_tokens: specials,
+                ..EncodeOptions::default()
+            },
+        )
         .wait()
         .expect("encoding a text");
     encoded

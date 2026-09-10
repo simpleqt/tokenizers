@@ -9,6 +9,7 @@ use crate::models::unigram::{Unigram, UnigramScratch};
 use crate::models::wordlevel::WordLevel;
 #[cfg(feature = "wordpiece")]
 use crate::models::wordpiece::{PipelineWordPiece, WordPieceScratch};
+pub use crate::pipeline::encode_options::{EncodeOptions, Padding, Truncation};
 use crate::utils::truncation::truncate_pair;
 use crate::{
     DecoderRuntime, PaddingParams, TruncationParams,
@@ -25,6 +26,7 @@ use parallel::StreamingIter;
 
 use super::Result;
 
+pub mod encode_options;
 #[cfg(feature = "parallelism")]
 mod parallel;
 mod scratch_pool;
@@ -209,9 +211,9 @@ struct TokenizerInner {
     /// the special-token metadata that used to need a separate `tokenizer_config.json`. Empty
     /// when the config declares none. `BTreeMap` so the writer emits a stable key order.
     role_to_token: BTreeMap<String, String>,
-    /// Padding configuration, can be overridden at runtime with [`EncodeHandle::wait_with_padding`].
+    /// Padding configuration, overridden per call by [`EncodeOptions::padding`].
     padding: Option<PaddingParams>,
-    /// Truncation configuration, can be overridden at runtime with [`TODO`].
+    /// Truncation configuration, overridden per call by [`EncodeOptions::truncation`].
     truncation: Option<TruncationParams>,
     /// Pool of scratch buffers. Scratch buffers hold intermediate state (cache, intermediate buffers, etc) required by the tokenization algorithms.
     scratch_pool: ScratchPool,
@@ -418,14 +420,8 @@ impl EncodeHandle {
     /// Returns in input order
     pub fn wait(mut self) -> Result<Vec<Encoding>> {
         let padding = self.padding.take();
-        self.wait_with_padding(padding.as_ref())
-    }
-
-    /// [`wait`](Self::wait), with `params` standing in for the padding the tokenizer was built
-    /// with. `None` pads nothing, so it is how a caller turns a configured padding off.
-    pub fn wait_with_padding(self, params: Option<&PaddingParams>) -> Result<Vec<Encoding>> {
         let mut out = self.wait_inner()?;
-        if let Some(params) = params {
+        if let Some(params) = &padding {
             pad_encodings(&mut out, params)?;
         }
         Ok(out)
@@ -574,7 +570,7 @@ impl PipelineTokenizer {
     ///
     /// This way, special / added tokens declared on raw or normalized text are both caught.
     /// The remaining text is pre-tokenized and run through the model span by span.
-    pub fn encode(&self, inputs: impl Into<Inputs>, add_special_tokens: bool) -> EncodeHandle {
+    pub fn encode(&self, inputs: impl Into<Inputs>, options: EncodeOptions) -> EncodeHandle {
         let inputs = inputs.into();
         assert!(
             inputs.len() < usize::MAX,
@@ -582,24 +578,24 @@ impl PipelineTokenizer {
         );
         #[cfg(not(feature = "parallelism"))]
         return EncodeHandle::blocking(
-            self.encode_serial(inputs, add_special_tokens),
-            self.inner.padding.clone(),
+            self.encode_serial(inputs, &options),
+            self.resolve_padding(&options.padding).cloned(),
         );
 
         #[cfg(feature = "parallelism")]
-        parallel::encode(self, inputs, add_special_tokens)
+        parallel::encode(self, inputs, options)
     }
 
-    fn encode_serial(&self, inputs: Inputs, add_special_tokens: bool) -> Vec<Result<Encoding>> {
+    fn encode_serial(&self, inputs: Inputs, options: &EncodeOptions) -> Vec<Result<Encoding>> {
         let mut scratch = self.inner.scratch_pool.get(&self.inner.model);
         match inputs {
             Inputs::Single(input) => {
-                vec![self.encode_one(input, add_special_tokens, &mut scratch)]
+                vec![self.encode_one(input, options, &mut scratch)]
             }
             Inputs::Batch(batch) => {
                 let mut output = Vec::with_capacity(batch.len());
                 for input in batch {
-                    output.push(self.encode_one(input, add_special_tokens, &mut scratch));
+                    output.push(self.encode_one(input, options, &mut scratch));
                 }
                 output
             }
@@ -609,19 +605,38 @@ impl PipelineTokenizer {
     fn encode_one(
         &self,
         input: Input,
-        add_special_tokens: bool,
+        options: &EncodeOptions,
         scratch: &mut EncodeScratch,
     ) -> Result<Encoding> {
         match input {
             Input::Single(seq) => {
                 let toks = self.encode_sequence_with(&seq, scratch)?;
-                Ok(self.post_process(toks, None, add_special_tokens)?)
+                Ok(self.post_process(toks, None, options)?)
             }
             Input::Pair(s1, s2) => {
                 let a = self.encode_sequence_with(&s1, scratch)?;
                 let b = self.encode_sequence_with(&s2, scratch)?;
-                Ok(self.post_process(a, Some(b), add_special_tokens)?)
+                Ok(self.post_process(a, Some(b), options)?)
             }
+        }
+    }
+
+    fn resolve_truncation<'a>(
+        &'a self,
+        truncation: &'a Truncation,
+    ) -> Option<&'a TruncationParams> {
+        match truncation {
+            Truncation::Inherit => self.inner.truncation.as_ref(),
+            Truncation::Off => None,
+            Truncation::With(params) => Some(params),
+        }
+    }
+
+    fn resolve_padding<'a>(&'a self, padding: &'a Padding) -> Option<&'a PaddingParams> {
+        match padding {
+            Padding::Inherit => self.inner.padding.as_ref(),
+            Padding::Off => None,
+            Padding::With(params) => Some(params),
         }
     }
 
@@ -632,13 +647,18 @@ impl PipelineTokenizer {
         &self,
         s1: Vec<PipelineToken>,
         s2: Option<Vec<PipelineToken>>,
-        add_special_tokens: bool,
+        options: &EncodeOptions,
     ) -> Result<Encoding> {
         let pp = &self.inner.post_processor;
         let template = if s2.is_some() { &pp.pair } else { &pp.single };
-        let num_added_specials = if add_special_tokens { template.n_special() } else { 0 };
-        let (s1, s2) = truncate_pair(s1, s2, &self.inner.truncation, num_added_specials)?;
-        Ok(if add_special_tokens {
+        let num_added_specials = if options.add_special_tokens {
+            template.n_special()
+        } else {
+            0
+        };
+        let truncation = self.resolve_truncation(&options.truncation);
+        let (s1, s2) = truncate_pair(s1, s2, truncation, num_added_specials)?;
+        Ok(if options.add_special_tokens {
             template.post_process::<true>(s1, s2)
         } else {
             template.post_process::<false>(s1, s2)
@@ -752,23 +772,19 @@ impl PipelineTokenizer {
     pub fn encode_into(
         &self,
         input: &str,
-        add_special_tokens: bool,
+        options: EncodeOptions,
         out: &mut Vec<PipelineToken>,
     ) -> Result<()> {
         let mut scratch = self.inner.scratch_pool.get(&self.inner.model);
         let template = &self.inner.post_processor.single;
-        let reproduces_sequence = self.inner.truncation.is_none()
+        let reproduces_sequence = self.resolve_truncation(&options.truncation).is_none()
             && !template.has_type_ids()
-            && (!add_special_tokens || template.n_special() == 0);
+            && (!options.add_special_tokens || template.n_special() == 0);
         if reproduces_sequence {
-            // fast path: no truncation, no templating, no specials 
+            // fast path: no truncation, no templating, no specials
             return self.encode_sequence_into(input, &mut scratch, out);
         }
-        let encoding = self.encode_one(
-            Input::Single(input.to_owned()),
-            add_special_tokens,
-            &mut scratch,
-        )?;
+        let encoding = self.encode_one(Input::Single(input.to_owned()), &options, &mut scratch)?;
         out.extend_from_slice(encoding.ids());
         Ok(())
     }
@@ -1143,7 +1159,7 @@ mod tests {
         let pipeline = hello_pipeline();
 
         let encodings = pipeline
-            .encode(vec!["hhello", "hello"], false)
+            .encode(vec!["hhello", "hello"], no_specials())
             .wait()
             .unwrap();
 
@@ -1159,7 +1175,7 @@ mod tests {
         });
 
         let encodings = pipeline
-            .encode(vec!["hhello", "hello"], false)
+            .encode(vec!["hhello", "hello"], no_specials())
             .wait()
             .unwrap();
 
@@ -1168,33 +1184,47 @@ mod tests {
     }
 
     #[test]
-    fn wait_padded_overrides_the_tokenizers_configured_padding() {
+    fn padding_with_overrides_the_tokenizers_configured_padding() {
         let pipeline = hello_pipeline_with_padding(PaddingParams {
             strategy: PaddingStrategy::BatchLongest,
             ..PaddingParams::default()
         });
 
         let encodings = pipeline
-            .encode(vec!["hhello", "hello"], false)
-            .wait_with_padding(Some(&PaddingParams {
-                strategy: PaddingStrategy::Fixed(5),
-                ..PaddingParams::default()
-            }))
+            .encode(
+                vec!["hhello", "hello"],
+                EncodeOptions {
+                    add_special_tokens: false,
+                    padding: Padding::With(PaddingParams {
+                        strategy: PaddingStrategy::Fixed(5),
+                        ..PaddingParams::default()
+                    }),
+                    ..EncodeOptions::default()
+                },
+            )
+            .wait()
             .unwrap();
 
         assert!(encodings.iter().all(|e| e.len() == 5));
     }
 
     #[test]
-    fn wait_with_padding_none_turns_off_the_tokenizers_configured_padding() {
+    fn padding_off_turns_off_the_tokenizers_configured_padding() {
         let pipeline = hello_pipeline_with_padding(PaddingParams {
             strategy: PaddingStrategy::BatchLongest,
             ..PaddingParams::default()
         });
 
         let encodings = pipeline
-            .encode(vec!["hhello", "hello"], false)
-            .wait_with_padding(None)
+            .encode(
+                vec!["hhello", "hello"],
+                EncodeOptions {
+                    add_special_tokens: false,
+                    padding: Padding::Off,
+                    ..EncodeOptions::default()
+                },
+            )
+            .wait()
             .unwrap();
 
         assert_eq!(encodings[0].len(), 2);
@@ -1208,7 +1238,9 @@ mod tests {
             truncation(5, TruncationStrategy::LongestFirst),
         );
 
-        let encoding = pipeline.post_process(tokens(1..=8), None, true).unwrap();
+        let encoding = pipeline
+            .post_process(tokens(1..=8), None, &EncodeOptions::default())
+            .unwrap();
 
         assert_eq!(ids(&encoding), [CLS, 1, 2, 3, SEP]);
     }
@@ -1223,7 +1255,9 @@ mod tests {
             truncation(5, TruncationStrategy::LongestFirst),
         );
 
-        let encoding = pipeline.post_process(tokens(1..=8), None, false).unwrap();
+        let encoding = pipeline
+            .post_process(tokens(1..=8), None, &no_specials())
+            .unwrap();
 
         assert_eq!(ids(&encoding), [1, 2, 3, 4, 5]);
     }
@@ -1235,7 +1269,9 @@ mod tests {
             truncation(5, TruncationStrategy::LongestFirst),
         );
 
-        let encoding = pipeline.post_process(tokens(1..=3), None, true).unwrap();
+        let encoding = pipeline
+            .post_process(tokens(1..=3), None, &EncodeOptions::default())
+            .unwrap();
 
         assert_eq!(ids(&encoding), [CLS, 1, 2, 3, SEP]);
     }
@@ -1244,7 +1280,9 @@ mod tests {
     fn test_no_truncation() {
         let pipeline = pipeline_with(bert_post_processor(), None);
 
-        let encoding = pipeline.post_process(tokens(1..=8), None, true).unwrap();
+        let encoding = pipeline
+            .post_process(tokens(1..=8), None, &EncodeOptions::default())
+            .unwrap();
 
         assert_eq!(ids(&encoding), [CLS, 1, 2, 3, 4, 5, 6, 7, 8, SEP]);
     }
@@ -1260,7 +1298,9 @@ mod tests {
             }),
         );
 
-        let encoding = pipeline.post_process(tokens(1..=8), None, true).unwrap();
+        let encoding = pipeline
+            .post_process(tokens(1..=8), None, &EncodeOptions::default())
+            .unwrap();
 
         assert_eq!(ids(&encoding), [CLS, 6, 7, 8, SEP]);
     }
@@ -1273,7 +1313,11 @@ mod tests {
         );
 
         let encoding = pipeline
-            .post_process(tokens(1..=4), Some(tokens(11..=14)), true)
+            .post_process(
+                tokens(1..=4),
+                Some(tokens(11..=14)),
+                &EncodeOptions::default(),
+            )
             .unwrap();
 
         assert_eq!(ids(&encoding), [CLS, 1, 2, SEP, 11, 12, 13, SEP]);
@@ -1288,7 +1332,11 @@ mod tests {
         );
 
         let encoding = pipeline
-            .post_process(tokens(1..=4), Some(tokens(11..=14)), true)
+            .post_process(
+                tokens(1..=4),
+                Some(tokens(11..=14)),
+                &EncodeOptions::default(),
+            )
             .unwrap();
 
         assert_eq!(ids(&encoding), [CLS, 1, 2, 3, 4, SEP, 11, SEP]);
@@ -1305,7 +1353,7 @@ mod tests {
         );
 
         let err = pipeline
-            .post_process(tokens(1..=8), None, true)
+            .post_process(tokens(1..=8), None, &EncodeOptions::default())
             .err()
             .unwrap();
 
@@ -1325,7 +1373,9 @@ mod tests {
             truncation(1, TruncationStrategy::LongestFirst),
         );
 
-        let encoding = pipeline.post_process(tokens(1..=8), None, true).unwrap();
+        let encoding = pipeline
+            .post_process(tokens(1..=8), None, &EncodeOptions::default())
+            .unwrap();
 
         assert_eq!(ids(&encoding), [CLS, SEP]);
     }
@@ -1340,7 +1390,11 @@ mod tests {
         );
 
         let encoding = pipeline
-            .post_process(tokens(1..=4), Some(tokens(11..=14)), true)
+            .post_process(
+                tokens(1..=4),
+                Some(tokens(11..=14)),
+                &EncodeOptions::default(),
+            )
             .unwrap();
 
         assert_eq!(ids(&encoding), [CLS, SEP, SEP]);
@@ -1356,7 +1410,9 @@ mod tests {
             truncation(3, TruncationStrategy::LongestFirst),
         );
 
-        let encoding = pipeline.post_process(tokens(1..=8), None, true).unwrap();
+        let encoding = pipeline
+            .post_process(tokens(1..=8), None, &EncodeOptions::default())
+            .unwrap();
 
         assert_eq!(ids(&encoding), [1, 2, 3]);
     }
@@ -1379,7 +1435,9 @@ mod tests {
             truncation(3, TruncationStrategy::LongestFirst),
         );
 
-        let encoding = pipeline.post_process(tokens(1..=8), None, true).unwrap();
+        let encoding = pipeline
+            .post_process(tokens(1..=8), None, &EncodeOptions::default())
+            .unwrap();
 
         assert_eq!(ids(&encoding), [1, 2, 3]);
         assert_eq!(encoding.type_ids().unwrap(), [1, 1, 1]);
@@ -1393,7 +1451,9 @@ mod tests {
         let sequence = tokens(1..=8);
         let address = sequence.as_ptr();
 
-        let encoding = pipeline.post_process(sequence, None, true).unwrap();
+        let encoding = pipeline
+            .post_process(sequence, None, &EncodeOptions::default())
+            .unwrap();
 
         assert_eq!(encoding.ids().as_ptr(), address);
     }
@@ -1410,10 +1470,13 @@ mod tests {
         let mut out = Vec::new();
 
         pipeline
-            .encode_into("hhello hhello", true, &mut out)
+            .encode_into("hhello hhello", EncodeOptions::default(), &mut out)
             .unwrap();
 
-        let encoded = pipeline.encode(vec!["hhello hhello"], true).wait().unwrap();
+        let encoded = pipeline
+            .encode(vec!["hhello hhello"], EncodeOptions::default())
+            .wait()
+            .unwrap();
         assert_eq!(out.len(), 2);
         assert_eq!(out, encoded[0].ids());
     }
@@ -1427,6 +1490,13 @@ mod tests {
 
     fn ids(encoding: &Encoding) -> Vec<u32> {
         encoding.ids().iter().copied().map(u32::from).collect()
+    }
+
+    fn no_specials() -> EncodeOptions {
+        EncodeOptions {
+            add_special_tokens: false,
+            ..EncodeOptions::default()
+        }
     }
 
     /// `[CLS] $A [SEP]` and `[CLS] $A [SEP] $B:1 [SEP]:1`, the arrangement BERT's config declares.

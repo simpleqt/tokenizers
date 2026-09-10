@@ -145,11 +145,19 @@ mod tests {
     use super::*;
     use crate::models::bpe::PipelineBPE;
     use crate::pipeline::{
-        PipelineModel, PipelinePostProcessor, PipelinePreTokenizer, PipelineTokenizer,
+        EncodeOptions, PipelineModel, PipelinePostProcessor, PipelinePreTokenizer,
+        PipelineTokenizer,
     };
     use crate::pre_tokenizers::sequence::PipelineSequence;
     use crate::pre_tokenizers::whitespace::Whitespace;
     use crate::vocab::bucket_added_vocabulary::AddedVocabulary as BucketAddedVocabulary;
+
+    fn no_specials() -> EncodeOptions {
+        EncodeOptions {
+            add_special_tokens: false,
+            ..EncodeOptions::default()
+        }
+    }
 
     /// A BPE model that merges "hello" into the single id 7.
     fn hello_bpe() -> PipelineBPE {
@@ -336,7 +344,7 @@ mod tests {
     #[test]
     fn the_pool_gets_back_the_used_scratch_not_the_none_leftover() {
         let pipeline = hello_pipeline();
-        pipeline.encode("hello", false).wait().unwrap();
+        pipeline.encode("hello", no_specials()).wait().unwrap();
         assert_eq!(pipeline.inner.scratch_pool.len(), 1);
         let scratch = pipeline.inner.scratch_pool.get(&pipeline.inner.model);
         assert!(
@@ -383,15 +391,24 @@ mod tests {
 
         // The first encode grows the buffers to what this input needs, the second runs inside
         // them. Anything from there on has nothing left to grow.
-        pipeline.encode(input.as_str(), false).wait().unwrap();
-        pipeline.encode(input.as_str(), false).wait().unwrap();
+        pipeline
+            .encode(input.as_str(), no_specials())
+            .wait()
+            .unwrap();
+        pipeline
+            .encode(input.as_str(), no_specials())
+            .wait()
+            .unwrap();
         let warm = pooled_buffers(&pipeline);
         assert!(
             warm.pre_tokens.1 >= words && warm.symbols.1 > 0,
             "the encodes left buffers this test cannot compare: {warm:?}"
         );
 
-        pipeline.encode(input.as_str(), false).wait().unwrap();
+        pipeline
+            .encode(input.as_str(), no_specials())
+            .wait()
+            .unwrap();
         assert_eq!(
             pooled_buffers(&pipeline),
             warm,
@@ -421,7 +438,10 @@ mod tests {
 
         // The buffers rotate, so they take a few encodes to all have been grown once.
         for _ in 0..4 {
-            pipeline.encode(input.as_str(), false).wait().unwrap();
+            pipeline
+                .encode(input.as_str(), no_specials())
+                .wait()
+                .unwrap();
         }
         let warm = pooled_span_buffers(&pipeline);
         assert_eq!(
@@ -432,7 +452,10 @@ mod tests {
              is comparing addresses that prove nothing"
         );
 
-        pipeline.encode(input.as_str(), false).wait().unwrap();
+        pipeline
+            .encode(input.as_str(), no_specials())
+            .wait()
+            .unwrap();
         assert_eq!(
             pooled_span_buffers(&pipeline),
             warm,
@@ -449,7 +472,7 @@ mod tests {
     #[test]
     fn the_word_cache_outlives_the_encode_call() {
         let pipeline = hello_pipeline();
-        pipeline.encode("helo", false).wait().unwrap();
+        pipeline.encode("helo", no_specials()).wait().unwrap();
 
         let mut scratch = pipeline.inner.scratch_pool.get(&pipeline.inner.model);
         let PipelineModelScratch::BPE(bpe) = &mut scratch.model else {

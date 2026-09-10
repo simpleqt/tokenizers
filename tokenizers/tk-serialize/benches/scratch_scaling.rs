@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 use criterion::{
     BenchmarkId, Criterion, SamplingMode, Throughput, criterion_group, criterion_main,
 };
+use tk_encode::pipeline::EncodeOptions;
 use tk_encode::pipeline::PipelineTokenizer;
 
 /// Roughly the prompt size the sharded pool was measured at in #2365.
@@ -91,7 +92,12 @@ fn encode_on(
                 for _ in 0..iters {
                     // encode() hands back a handle; wait() is what produces the ids. Dropping
                     // the handle unwaited would measure the call and not the tokenizer.
-                    black_box(tokenizer.encode(prompt.as_str(), true).wait().unwrap());
+                    black_box(
+                        tokenizer
+                            .encode(prompt.as_str(), EncodeOptions::default())
+                            .wait()
+                            .unwrap(),
+                    );
                 }
             })
         })
