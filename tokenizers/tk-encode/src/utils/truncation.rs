@@ -221,7 +221,7 @@ mod tests {
     }
 
     #[test]
-    fn longest_first_balances_a_pair_against_max_length() {
+    fn test_longest_first_pair() {
         let params = params(7, TruncationStrategy::LongestFirst);
 
         truncate_and_assert(empty(), empty(), &params, 0, 0);
@@ -246,12 +246,12 @@ mod tests {
     }
 
     #[test]
-    fn no_truncation_params_keeps_both_sequences_whole() {
+    fn test_no_truncation() {
         truncate_and_assert(long(), long(), &None, 8, 8);
     }
 
     #[test]
-    fn longest_first_drops_the_tail_of_a_lone_sequence() {
+    fn test_longest_first_single() {
         let (t1, t2) = truncate_pair(
             long(),
             None,
@@ -267,7 +267,7 @@ mod tests {
     // The specials the post-processor will add are not in either sequence yet, so the caller passes
     // their count and truncation has to make room for them.
     #[test]
-    fn special_tokens_count_against_max_length() {
+    fn test_specials() {
         let params = params(8, TruncationStrategy::LongestFirst);
 
         let (untouched, _) = truncate_pair(long(), None, &params, 0).unwrap();
@@ -278,7 +278,7 @@ mod tests {
     }
 
     #[test]
-    fn only_first_truncates_the_first_sequence() {
+    fn test_only_first() {
         let (t1, t2) = truncate_pair(
             long(),
             Some(short()),
@@ -292,7 +292,7 @@ mod tests {
     }
 
     #[test]
-    fn only_second_truncates_the_second_sequence() {
+    fn test_only_second() {
         let (t1, t2) = truncate_pair(
             short(),
             Some(long()),
@@ -308,7 +308,7 @@ mod tests {
     // `OnlySecond` names the sequence to cut, so there is nothing to cut without a pair. Silently
     // falling back to the first sequence would truncate what the caller asked us to keep.
     #[test]
-    fn only_second_refuses_a_missing_pair() {
+    fn test_only_second_no_pair() {
         let err = truncate_pair(long(), None, &params(7, TruncationStrategy::OnlySecond), 0)
             .err()
             .unwrap();
@@ -322,7 +322,7 @@ mod tests {
     // `OnlyFirst` forbids touching the pair, so a first sequence that is already shorter than what
     // has to go cannot reach `max_length` at all.
     #[test]
-    fn only_first_refuses_a_sequence_too_short_to_truncate() {
+    fn test_only_first_too_short() {
         let err = truncate_pair(
             short(),
             Some(long()),
@@ -342,7 +342,7 @@ mod tests {
     // post-processor's pair template references the second sequence, and it cannot place the
     // specials around a sequence that is not there.
     #[test]
-    fn max_length_zero_empties_both_sequences() {
+    fn test_max_length_zero() {
         let params = params(0, TruncationStrategy::LongestFirst);
 
         truncate_and_assert(empty(), short(), &params, 0, 0);
@@ -363,7 +363,7 @@ mod tests {
     }
 
     #[test]
-    fn right_truncation_keeps_the_head() {
+    fn test_truncate_right() {
         assert_eq!(
             truncated(long(), 3, TruncationDirection::Right),
             make_tokens(7..10)
@@ -371,7 +371,7 @@ mod tests {
     }
 
     #[test]
-    fn left_truncation_keeps_the_tail() {
+    fn test_truncate_left() {
         assert_eq!(
             truncated(long(), 3, TruncationDirection::Left),
             make_tokens(12..15)
@@ -379,7 +379,7 @@ mod tests {
     }
 
     #[test]
-    fn truncating_to_the_sequence_length_leaves_it_untouched() {
+    fn test_keep_len() {
         for direction in BOTH_DIRECTIONS {
             assert_eq!(truncated(long(), 8, direction), long());
         }
@@ -389,7 +389,7 @@ mod tests {
     // branch saturates: `num_special_tokens` 10 against a 2 and 5 token pair with `max_length` 9
     // computes 7 tokens to keep out of the 5 the second sequence has.
     #[test]
-    fn keeping_more_tokens_than_there_are_leaves_the_sequence_untouched() {
+    fn test_keep_more_than_len() {
         for direction in BOTH_DIRECTIONS {
             assert_eq!(truncated(medium(), 9, direction), medium());
             assert_eq!(truncated(empty(), 9, direction), empty());
@@ -397,7 +397,7 @@ mod tests {
     }
 
     #[test]
-    fn truncating_to_zero_empties_the_sequence() {
+    fn test_keep_zero() {
         for direction in BOTH_DIRECTIONS {
             assert!(truncated(long(), 0, direction).is_empty());
         }
@@ -407,7 +407,7 @@ mod tests {
     // `Vec` would pay an allocation and a copy instead, which is the whole reason the left branch
     // is written as a drain.
     #[test]
-    fn left_truncation_reuses_the_allocation() {
+    fn test_left_reuses_allocation() {
         let mut tokens = long();
         let capacity = tokens.capacity();
         let address = tokens.as_ptr();
@@ -445,7 +445,7 @@ mod tests {
     // passes the configured direction on to `truncate_tokens`. Expected ids come from released
     // tokenizers 0.23.1 `truncate_encodings`, which is where the direction semantics come from.
     #[test]
-    fn the_left_direction_reaches_every_strategy() {
+    fn test_direction_left() {
         assert_truncated(
             long(),
             Some(long()),
@@ -484,7 +484,7 @@ mod tests {
     // so 4 and 4 tokens with 3 specials and `max_length` 8 come back as 2 and 3. Expected ids are
     // its output.
     #[test]
-    fn specials_count_against_max_length_for_a_pair() {
+    fn test_specials_pair() {
         assert_truncated(
             medium(),
             Some(medium()),

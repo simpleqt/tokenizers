@@ -1202,7 +1202,7 @@ mod tests {
     }
 
     #[test]
-    fn truncation_makes_room_for_the_specials_the_template_adds() {
+    fn test_truncate_with_specials() {
         let pipeline = pipeline_with(
             bert_post_processor(),
             truncation(5, TruncationStrategy::LongestFirst),
@@ -1217,7 +1217,7 @@ mod tests {
     // (`add_special_tokens && n_added_tokens > 0`, tokenizer/mod.rs:1243), so a caller that asks
     // for no specials gets a full `max_length` of sequence tokens.
     #[test]
-    fn specials_that_are_not_added_do_not_count_against_max_length() {
+    fn test_no_specials_added() {
         let pipeline = pipeline_with(
             bert_post_processor(),
             truncation(5, TruncationStrategy::LongestFirst),
@@ -1229,7 +1229,7 @@ mod tests {
     }
 
     #[test]
-    fn a_sequence_that_fits_with_its_specials_is_untouched() {
+    fn test_fits() {
         let pipeline = pipeline_with(
             bert_post_processor(),
             truncation(5, TruncationStrategy::LongestFirst),
@@ -1241,7 +1241,7 @@ mod tests {
     }
 
     #[test]
-    fn no_truncation_config_leaves_a_long_sequence_whole() {
+    fn test_no_truncation() {
         let pipeline = pipeline_with(bert_post_processor(), None);
 
         let encoding = pipeline.post_process(tokens(1..=8), None, true).unwrap();
@@ -1250,7 +1250,7 @@ mod tests {
     }
 
     #[test]
-    fn left_truncation_keeps_the_tail_between_the_specials() {
+    fn test_truncate_left() {
         let pipeline = pipeline_with(
             bert_post_processor(),
             Some(TruncationParams {
@@ -1266,7 +1266,7 @@ mod tests {
     }
 
     #[test]
-    fn a_pair_template_counts_every_special_it_adds() {
+    fn test_pair_specials() {
         let pipeline = pipeline_with(
             bert_post_processor(),
             truncation(8, TruncationStrategy::LongestFirst),
@@ -1281,7 +1281,7 @@ mod tests {
     }
 
     #[test]
-    fn only_second_cuts_the_pair_and_leaves_the_first_sequence_whole() {
+    fn test_only_second() {
         let pipeline = pipeline_with(
             bert_post_processor(),
             truncation(8, TruncationStrategy::OnlySecond),
@@ -1298,7 +1298,7 @@ mod tests {
     // `OnlySecond` names the sequence to cut, so a lone sequence has nothing to cut. The error has
     // to come back out of `post_process` rather than the first sequence being cut instead.
     #[test]
-    fn only_second_without_a_pair_fails_the_post_processing() {
+    fn test_only_second_no_pair() {
         let pipeline = pipeline_with(
             bert_post_processor(),
             truncation(5, TruncationStrategy::OnlySecond),
@@ -1319,7 +1319,7 @@ mod tests {
     // encoding comes back longer than `max_length`. There is no upstream behaviour to match:
     // released 0.23.1 computes `max_length - n_added_tokens` unguarded (tokenizer/mod.rs:1245).
     #[test]
-    fn a_max_length_shorter_than_the_specials_leaves_only_the_specials() {
+    fn test_max_length_below_specials() {
         let pipeline = pipeline_with(
             bert_post_processor(),
             truncation(1, TruncationStrategy::LongestFirst),
@@ -1333,7 +1333,7 @@ mod tests {
     // Same case for a pair: the pair template places sequence B, so an emptied B still has to be
     // there for the template to lay out.
     #[test]
-    fn a_max_length_shorter_than_the_specials_still_lays_out_the_pair_template() {
+    fn test_max_length_below_specials_pair() {
         let pipeline = pipeline_with(
             bert_post_processor(),
             truncation(1, TruncationStrategy::LongestFirst),
@@ -1350,7 +1350,7 @@ mod tests {
     // A template that adds nothing takes the fast path, which hands the sequence buffer straight
     // back. It has to be the truncated buffer.
     #[test]
-    fn truncation_applies_to_a_template_that_adds_nothing() {
+    fn test_empty_template() {
         let pipeline = pipeline_with(
             PipelinePostProcessor::default(),
             truncation(3, TruncationStrategy::LongestFirst),
@@ -1364,7 +1364,7 @@ mod tests {
     // A single template that retags its sequence carries type ids, which rules out the fast path.
     // This is truncation reaching the template with no specials in the way.
     #[test]
-    fn a_retagging_template_truncates_and_keeps_its_type_ids() {
+    fn test_template_type_ids() {
         let pipeline = pipeline_with(
             PipelinePostProcessor {
                 single: Template {
@@ -1388,7 +1388,7 @@ mod tests {
     // The fast path returns the sequence buffer itself. A copy would be a silent regression that
     // no assertion on the ids can catch.
     #[test]
-    fn the_fast_path_hands_back_the_sequence_buffer() {
+    fn test_fast_path_buffer() {
         let pipeline = pipeline_with(PipelinePostProcessor::default(), None);
         let sequence = tokens(1..=8);
         let address = sequence.as_ptr();
@@ -1402,7 +1402,7 @@ mod tests {
     // `post_process`, which is where truncation happens. Whatever route it takes, it has to agree
     // with `encode`.
     #[test]
-    fn encode_into_truncates_when_the_template_adds_nothing() {
+    fn test_encode_into() {
         let pipeline = pipeline_with(
             PipelinePostProcessor::default(),
             truncation(2, TruncationStrategy::LongestFirst),
