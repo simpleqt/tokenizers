@@ -19,8 +19,6 @@ mod writer;
 #[cfg(all(test, feature = "deserialize"))]
 mod tests;
 
-use crate::to_json::truncation::write_truncation;
-
 use self::added_tokens::write_added_tokens;
 use self::decoders::write_decoder;
 use self::model::write_model;
@@ -28,6 +26,7 @@ use self::normalizers::write_normalizer;
 use self::padding::write_padding;
 use self::post_processors::write_post_processor;
 use self::pre_tokenizers::write_pre_tokenizer;
+use self::truncation::write_truncation;
 use self::writer::Out;
 use tk_encode::pipeline::PipelineTokenizer;
 use tk_encode::tokenizer::Result;
@@ -52,13 +51,10 @@ pub fn to_json(tokenizer: &PipelineTokenizer) -> Result<String> {
     let normalizers = tokenizer.get_normalizers();
     out.obj_open();
     out.field_str("version", "2.0");
-    // TODO: this is REQUIRED for v1
-    out.field_null("truncation");
-    out.key("padding");
-    write_padding(&mut out, tokenizer.get_padding());
     out.key("truncation");
     write_truncation(&mut out, tokenizer.get_truncation());
-
+    out.key("padding");
+    write_padding(&mut out, tokenizer.get_padding());
     // Which token plays which role, so this file can stand in for a `tokenizer_config.json`.
     out.key("role_to_token");
     let roles = tokenizer.get_role_to_token();

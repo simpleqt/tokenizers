@@ -49,7 +49,7 @@ use self::normalizers::read_normalizers;
 use self::padding::read_padding;
 use self::post_processors::read_post_processor;
 use self::pre_tokenizers::read_pre_tokenizer;
-use crate::from_json::truncation::read_truncation;
+use self::truncation::read_truncation;
 use crate::json::Json;
 use std::collections::BTreeMap;
 use tk_encode::models::bpe::{BpeConfig, PipelineBPE};
